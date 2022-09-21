@@ -6,11 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 const CHANNEL_BUFFER_SIZE = 10
 
-func StartCopy(from string, to string, extensions []string, blacklist bool, goroutines int, bufferSize int) {
+func StartCopy(from string, to string, extensions []string, blacklist bool, goroutines int, bufferSize int, move bool) {
 
 	files := make(chan string, CHANNEL_BUFFER_SIZE)
 	go recurse(from, files)
@@ -18,9 +19,16 @@ func StartCopy(from string, to string, extensions []string, blacklist bool, goro
 	go filterFiles(files, filteredFiles, extensions, blacklist)
 
 	if goroutines > 1 {
+
+		var wg sync.WaitGroup = sync.WaitGroup{}
+		wg.Add(goroutines - 1)
 		for i := 1; i < goroutines; i++ {
-			go copyFilesWithDirStructure(from, to, filteredFiles, bufferSize)
+			go func() {
+				copyFilesWithDirStructure(from, to, filteredFiles, bufferSize, move)
+				wg.Done()
+			}()
 		}
+		wg.Wait()
 	} else {
 		fileList := make([]string, 0)
 		for file := range filteredFiles {
@@ -35,12 +43,12 @@ func StartCopy(from string, to string, extensions []string, blacklist bool, goro
 			close(fileChannel)
 		}()
 
-		copyFilesWithDirStructure(from, to, fileChannel, bufferSize)
+		copyFilesWithDirStructure(from, to, fileChannel, bufferSize, move)
 
 	}
 }
 
-func copyFilesWithDirStructure(from string, to string, files chan string, bufferSize int) {
+func copyFilesWithDirStructure(from string, to string, files chan string, bufferSize int, move bool) {
 	to = strings.TrimRight(to, "/")
 
 	buffer := make([]byte, bufferSize*1024)
@@ -53,24 +61,47 @@ func copyFilesWithDirStructure(from string, to string, files chan string, buffer
 		if err != nil {
 			panic(err)
 		}
-		copyWithBuffer(file, targetPath, buffer)
+		if move {
+			moveFile(file, targetPath, buffer)
+		} else {
+			copyWithBuffer(file, targetPath, buffer)
+		}
 	}
 }
 
-func copyWithBuffer(from string, to string, buffer []byte) {
-	source, err := os.Open(from)
+var copyRequired = false
+
+func moveFile(from string, to string, buffer []byte) {
+	if !copyRequired {
+		err := os.Rename(filepath.FromSlash(from), filepath.FromSlash(to))
+		if err != nil {
+			copyRequired = true
+			moveFile(from, to, buffer)
+		}
+	} else {
+		err := copyWithBuffer(from, to, buffer)
+		if err != nil {
+			panic(err)
+		}
+		os.Remove(filepath.FromSlash(from))
+	}
+}
+
+func copyWithBuffer(from string, to string, buffer []byte) error {
+	source, err := os.Open(filepath.FromSlash(from))
 	if err != nil {
-		panic(err)
+		return err
 	}
 	defer source.Close()
 
-	destination, err := os.Create(to)
+	destination, err := os.Create(filepath.FromSlash(to))
 	if err != nil {
-		panic(err)
+		return err
 	}
 	defer destination.Close()
 
 	io.CopyBuffer(destination, source, buffer)
+	return err
 }
 
 func filterFiles(in chan string, out chan string, extensions []string, blacklist bool) {
@@ -80,11 +111,18 @@ func filterFiles(in chan string, out chan string, extensions []string, blacklist
 		suffixList = append(suffixList, "."+extension)
 	}
 
+file:
 	for file := range in {
 		for _, suffix := range suffixList {
-			if strings.HasSuffix(file, suffix) != blacklist {
-				out <- file
+			if strings.HasSuffix(file, suffix) {
+				if !blacklist {
+					out <- file
+				}
+				continue file
 			}
+		}
+		if blacklist {
+			out <- file
 		}
 	}
 	close(out)

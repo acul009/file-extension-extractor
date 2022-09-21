@@ -7,6 +7,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/acul009/file-extension-extractor/copier"
 	"github.com/spf13/cobra"
@@ -49,7 +50,11 @@ var rootCmd = &cobra.Command{
 		if err != nil {
 			panic(err)
 		}
-		copier.StartCopy(args[0], args[1], extensions, blacklist, routines, buffer)
+		move, err := cmd.Flags().GetBool("move")
+		if err != nil {
+			panic(err)
+		}
+		copier.StartCopy(filepath.ToSlash(args[0]), filepath.ToSlash(args[1]), extensions, blacklist, routines, buffer, move)
 	},
 }
 
@@ -74,6 +79,7 @@ func init() {
 	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 	rootCmd.Flags().StringArrayP("extensions", "e", []string{}, "Each extension flag adds an extension to scan for. e.g.: -r pdf")
 	rootCmd.Flags().BoolP("blacklist", "b", false, "Use Blacklist instead of whitelist")
+	rootCmd.Flags().BoolP("move", "m", false, "Move instead of copy")
 	rootCmd.Flags().IntP("parralell", "p", 1, "Use multiple concurrent goroutines")
 	rootCmd.Flags().Int("buffer", 4, "How many kilobytes the copy buffer should use")
 }
