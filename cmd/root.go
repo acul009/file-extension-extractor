@@ -41,10 +41,15 @@ var rootCmd = &cobra.Command{
 		if err != nil {
 			panic(err)
 		}
-		for _, ext := range extensions {
-			fmt.Println(ext)
+		routines, err := cmd.Flags().GetInt("parralell")
+		if err != nil {
+			panic(err)
 		}
-		copier.StartCopy(args[0], args[1], extensions, blacklist, 4)
+		buffer, err := cmd.Flags().GetInt("buffer")
+		if err != nil {
+			panic(err)
+		}
+		copier.StartCopy(args[0], args[1], extensions, blacklist, routines, buffer)
 	},
 }
 
@@ -69,4 +74,6 @@ func init() {
 	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 	rootCmd.Flags().StringArrayP("extensions", "e", []string{}, "Each extension flag adds an extension to scan for. e.g.: -r pdf")
 	rootCmd.Flags().BoolP("blacklist", "b", false, "Use Blacklist instead of whitelist")
+	rootCmd.Flags().IntP("parralell", "p", 1, "Use multiple concurrent goroutines")
+	rootCmd.Flags().Int("buffer", 4, "How many kilobytes the copy buffer should use")
 }

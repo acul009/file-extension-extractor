@@ -1,22 +1,76 @@
 package copier
 
 import (
-	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
-func StartCopy(from string, to string, extensions []string, blacklist bool, goroutines int) {
+const CHANNEL_BUFFER_SIZE = 10
 
-	files := make(chan string)
+func StartCopy(from string, to string, extensions []string, blacklist bool, goroutines int, bufferSize int) {
+
+	files := make(chan string, CHANNEL_BUFFER_SIZE)
 	go recurse(from, files)
-	filteredFiles := make(chan string)
+	filteredFiles := make(chan string, CHANNEL_BUFFER_SIZE)
 	go filterFiles(files, filteredFiles, extensions, blacklist)
 
-	for file := range filteredFiles {
-		fmt.Println(file)
+	if goroutines > 1 {
+		for i := 1; i < goroutines; i++ {
+			go copyFilesWithDirStructure(from, to, filteredFiles, bufferSize)
+		}
+	} else {
+		fileList := make([]string, 0)
+		for file := range filteredFiles {
+			fileList = append(fileList, file)
+		}
+		fileChannel := make(chan string, CHANNEL_BUFFER_SIZE)
+
+		go func() {
+			for _, file := range fileList {
+				fileChannel <- file
+			}
+			close(fileChannel)
+		}()
+
+		copyFilesWithDirStructure(from, to, fileChannel, bufferSize)
+
 	}
+}
+
+func copyFilesWithDirStructure(from string, to string, files chan string, bufferSize int) {
+	to = strings.TrimRight(to, "/")
+
+	buffer := make([]byte, bufferSize*1024)
+
+	for file := range files {
+		relativeLocation := strings.Trim(file[len(from):], "/")
+		targetPath := to + "/" + relativeLocation
+		dir := filepath.Dir(targetPath)
+		err := os.MkdirAll(dir, os.ModePerm)
+		if err != nil {
+			panic(err)
+		}
+		copyWithBuffer(file, targetPath, buffer)
+	}
+}
+
+func copyWithBuffer(from string, to string, buffer []byte) {
+	source, err := os.Open(from)
+	if err != nil {
+		panic(err)
+	}
+	defer source.Close()
+
+	destination, err := os.Create(to)
+	if err != nil {
+		panic(err)
+	}
+	defer destination.Close()
+
+	io.CopyBuffer(destination, source, buffer)
 }
 
 func filterFiles(in chan string, out chan string, extensions []string, blacklist bool) {
